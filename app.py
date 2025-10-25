@@ -21,6 +21,7 @@ def _init_state():
         "correct": 0,
         "answered": False,
         "hide_pairs_while_testing": True,
+        "strict_hide_during_test": True,
     }
     for k, v in default_keys.items():
         if k not in st.session_state:
@@ -60,6 +61,14 @@ with st.sidebar:
         except Exception as e:
             st.error(f"読み込みエラー: {e}")
 
+    st.divider()
+    st.subheader("学習モード設定")
+    st.session_state.strict_hide_during_test = st.toggle(
+        "テスト中は翻訳セクションを完全非表示にする",
+        value=st.session_state.strict_hide_during_test,
+        help="有効にすると、テスト中は(2)一括翻訳と(2.5)編集がまったく表示されません。"
+    )
+
 # ======================== 1) 単語入力 ========================
 st.subheader("1) 単語を入力（日本語・改行区切り）")
 ja_input = st.text_area("例：\n犬\n猫\n学校", height=150)
@@ -85,72 +94,66 @@ with col2:
 st.divider()
 
 # ======================== 2) 一括翻訳（ja → en） ========================
-st.subheader("2) 一括翻訳（ja → en）")
-if st.button("翻訳を実行"):
-    try:
-        st.session_state.en_list = translator.translate_batch(st.session_state.ja_list) if st.session_state.ja_list else []
-        st.success("翻訳しました")
-    except Exception as e:
-        st.error(f"翻訳中にエラー: {e}")
+if st.session_state.testing and st.session_state.strict_hide_during_test:
+    st.info("テスト中のため『2) 一括翻訳』セクションは非表示です。テストを終了すると操作できます。")
+else:
+    st.subheader("2) 一括翻訳（ja → en）")
+    if st.button("翻訳を実行"):
+        try:
+            st.session_state.en_list = translator.translate_batch(st.session_state.ja_list) if st.session_state.ja_list else []
+            st.success("翻訳しました")
+        except Exception as e:
+            st.error(f"翻訳中にエラー: {e}")
 
-# テスト中は一覧を隠す（トグル可）
-if st.session_state.testing:
-    st.checkbox("テスト中は翻訳一覧を隠す", value=st.session_state.hide_pairs_while_testing,
-                key="hide_pairs_while_testing")
+    if st.session_state.ja_list:
+        st.write("現在のペア：")
+        for ja, en in zip(st.session_state.ja_list, st.session_state.en_list or [""] * len(st.session_state.ja_list)):
+            st.write(f"- {ja}  →  {en}")
 
-can_show_pairs = True
-if st.session_state.testing and st.session_state.hide_pairs_while_testing:
-    can_show_pairs = False
+    st.divider()
 
-if st.session_state.ja_list and can_show_pairs:
-    st.write("現在のペア：")
-    for ja, en in zip(st.session_state.ja_list, st.session_state.en_list or [""] * len(st.session_state.ja_list)):
-        st.write(f"- {ja}  →  {en}")
+    # ======================== 2.5) 単語ペアの編集 ========================
+    st.subheader("2.5) 単語ペアの編集")
+    editable_rows = [
+        {"日本語": ja, "英語": st.session_state.en_list[i] if i < len(st.session_state.en_list) else ""}
+        for i, ja in enumerate(st.session_state.ja_list)
+    ]
 
-# ======================== 2.5) 単語ペアの編集 ========================
-st.subheader("2.5) 単語ペアの編集")
+    edited = st.data_editor(
+        editable_rows,
+        num_rows="dynamic",
+        use_container_width=True,
+        key="editor_pairs",
+        column_config={
+            "日本語": st.column_config.TextColumn("日本語"),
+            "英語": st.column_config.TextColumn("英語"),
+        }
+    )
 
-editable_rows = [
-    {"日本語": ja, "英語": st.session_state.en_list[i] if i < len(st.session_state.en_list) else ""}
-    for i, ja in enumerate(st.session_state.ja_list)
-]
+    col_save, col_note = st.columns([1, 2])
+    with col_save:
+        if st.button("編集内容を保存（リストへ反映）"):
+            new_ja = []
+            new_en = []
+            for row in edited:
+                ja = (row.get("日本語") or "").strip()
+                en = (row.get("英語") or "").strip()
+                if not ja and not en:
+                    continue
+                new_ja.append(ja)
+                new_en.append(en)
+            st.session_state.ja_list = new_ja
+            st.session_state.en_list = new_en
+            st.success(f"編集を反映しました（{len(new_ja)} 件）")
+            st.session_state.testing = False
+            st.session_state.pairs = []
+            st.session_state.test_index = 0
+            st.session_state.show_answer = False
+            st.session_state.correct = 0
+            st.session_state.answered = False
 
-edited = st.data_editor(
-    editable_rows,
-    num_rows="dynamic",
-    use_container_width=True,
-    key="editor_pairs",
-    column_config={
-        "日本語": st.column_config.TextColumn("日本語"),
-        "英語": st.column_config.TextColumn("英語"),
-    }
-)
-
-col_save, col_note = st.columns([1, 2])
-with col_save:
-    if st.button("編集内容を保存（リストへ反映）"):
-        new_ja = []
-        new_en = []
-        for row in edited:
-            ja = (row.get("日本語") or "").strip()
-            en = (row.get("英語") or "").strip()
-            if not ja and not en:
-                continue
-            new_ja.append(ja)
-            new_en.append(en)
-        st.session_state.ja_list = new_ja
-        st.session_state.en_list = new_en
-        st.success(f"編集を反映しました（{len(new_ja)} 件）")
-        # テスト関連の状態は初期化（内容が変わったため）
-        st.session_state.testing = False
-        st.session_state.pairs = []
-        st.session_state.test_index = 0
-        st.session_state.show_answer = False
-        st.session_state.correct = 0
-        st.session_state.answered = False
-
-with col_note:
-    st.caption("※ 行の追加/削除・直接編集ができます。保存でリストに反映されます。")
+    with col_note:
+        st.caption("※ 行の追加/削除・直接編集ができます。保存でリストに反映されます。")
 
 st.divider()
 
@@ -235,5 +238,4 @@ if st.session_state.testing and st.session_state.pairs:
             st.session_state.answered = False
             st.session_state.show_answer = False
 
-    # 途中スコア
     st.caption(f"正答数: {st.session_state.correct} / {i + 1 if st.session_state.answered else i}")
