@@ -20,8 +20,7 @@ def _init_state():
         "direction": "ja→en",
         "correct": 0,
         "answered": False,
-        "hide_pairs_while_testing": True,
-        "strict_hide_during_test": True,
+        "hide_sections": False,  # ★ (2)と(2.5)を自動で隠す
     }
     for k, v in default_keys.items():
         if k not in st.session_state:
@@ -34,7 +33,6 @@ st.title("英単語支援ソフト（Web版）")
 # ======================== サイドバー：セーブ/ロード ========================
 with st.sidebar:
     st.header("セーブ/ロード")
-    # 保存（ダウンロード）
     if st.button("現在のデータをダウンロード"):
         buf = io.StringIO()
         buf.write("ja_list:\n")
@@ -45,7 +43,6 @@ with st.sidebar:
             buf.write(en + "\n")
         st.download_button("tango_data.txt を保存", buf.getvalue(), file_name="tango_data.txt")
 
-    # 読み込み（アップロード）
     up = st.file_uploader("tango_data.txt を読み込む", type=["txt"])
     if up is not None:
         text = up.read().decode("utf-8")
@@ -61,16 +58,8 @@ with st.sidebar:
         except Exception as e:
             st.error(f"読み込みエラー: {e}")
 
-    st.divider()
-    st.subheader("学習モード設定")
-    st.session_state.strict_hide_during_test = st.toggle(
-        "テスト中は翻訳セクションを完全非表示にする",
-        value=st.session_state.strict_hide_during_test,
-        help="有効にすると、テスト中は(2)一括翻訳と(2.5)編集がまったく表示されません。"
-    )
-
 # ======================== 1) 単語入力 ========================
-st.subheader("1) 単語を入力（日本語・改行区切り）")
+st.subheader("(1) 単語を入力（日本語・改行区切り）")
 ja_input = st.text_area("例：\n犬\n猫\n学校", height=150)
 
 col1, col2 = st.columns(2)
@@ -85,8 +74,8 @@ with col2:
         st.session_state.en_list = []
         st.session_state.pairs = []
         st.session_state.testing = False
+        st.session_state.hide_sections = False
         st.session_state.test_index = 0
-        st.session_state.show_answer = False
         st.session_state.correct = 0
         st.session_state.answered = False
         st.info("リストを空にしました")
@@ -94,10 +83,8 @@ with col2:
 st.divider()
 
 # ======================== 2) 一括翻訳（ja → en） ========================
-if st.session_state.testing and st.session_state.strict_hide_during_test:
-    st.info("テスト中のため『2) 一括翻訳』セクションは非表示です。テストを終了すると操作できます。")
-else:
-    st.subheader("2) 一括翻訳（ja → en）")
+if not st.session_state.hide_sections:
+    st.subheader("(2) 一括翻訳（ja → en）")
     if st.button("翻訳を実行"):
         try:
             st.session_state.en_list = translator.translate_batch(st.session_state.ja_list) if st.session_state.ja_list else []
@@ -113,7 +100,7 @@ else:
     st.divider()
 
     # ======================== 2.5) 単語ペアの編集 ========================
-    st.subheader("2.5) 単語ペアの編集")
+    st.subheader("(2.5) 単語ペアの編集")
     editable_rows = [
         {"日本語": ja, "英語": st.session_state.en_list[i] if i < len(st.session_state.en_list) else ""}
         for i, ja in enumerate(st.session_state.ja_list)
@@ -133,8 +120,7 @@ else:
     col_save, col_note = st.columns([1, 2])
     with col_save:
         if st.button("編集内容を保存（リストへ反映）"):
-            new_ja = []
-            new_en = []
+            new_ja, new_en = [], []
             for row in edited:
                 ja = (row.get("日本語") or "").strip()
                 en = (row.get("英語") or "").strip()
@@ -148,19 +134,19 @@ else:
             st.session_state.testing = False
             st.session_state.pairs = []
             st.session_state.test_index = 0
-            st.session_state.show_answer = False
             st.session_state.correct = 0
             st.session_state.answered = False
 
     with col_note:
         st.caption("※ 行の追加/削除・直接編集ができます。保存でリストに反映されます。")
+else:
+    st.info("テスト中のため『(2) 一括翻訳』と『(2.5) 編集』は非表示です。テストを終了すると再表示されます。")
 
 st.divider()
 
 # ======================== 3) 単語テスト ========================
 st.subheader("3) 単語テスト")
 
-# 出題方向と結果リセット
 col_dir, col_reset = st.columns([2, 1])
 with col_dir:
     st.session_state.direction = st.radio("出題方向", ["ja→en", "en→ja"], horizontal=True)
@@ -170,17 +156,17 @@ with col_reset:
         st.session_state.test_index = 0
         st.session_state.answered = False
         st.session_state.testing = False
-        st.session_state.show_answer = False
+        st.session_state.hide_sections = False
 
 col3, col4 = st.columns(2)
 with col3:
-    if st.button("シャッフルしてテスト開始/再開"):
+    if st.button("シャッフルしてテスト開始"):
         pairs = list(zip(st.session_state.ja_list, st.session_state.en_list))
         random.shuffle(pairs)
         st.session_state.pairs = pairs
         st.session_state.testing = True
+        st.session_state.hide_sections = True  # ★開始時に非表示に
         st.session_state.test_index = 0
-        st.session_state.show_answer = False
         st.session_state.correct = 0
         st.session_state.answered = False
         if not pairs:
@@ -188,7 +174,8 @@ with col3:
 with col4:
     if st.button("テスト終了"):
         st.session_state.testing = False
-        st.session_state.show_answer = False
+        st.session_state.hide_sections = False  # ★終了時に再表示
+        st.success("テストを終了しました。")
 
 # ===== 出題〜採点 =====
 if st.session_state.testing and st.session_state.pairs:
@@ -227,15 +214,13 @@ if st.session_state.testing and st.session_state.pairs:
             if i < total - 1:
                 st.session_state.test_index += 1
                 st.session_state.answered = False
-                st.session_state.show_answer = False
             else:
                 st.success("テストは最後まで終了しました")
                 st.session_state.testing = False
-                st.session_state.answered = False
+                st.session_state.hide_sections = False
     with cols[2]:
         if st.button("最初に戻る"):
             st.session_state.test_index = 0
             st.session_state.answered = False
-            st.session_state.show_answer = False
 
     st.caption(f"正答数: {st.session_state.correct} / {i + 1 if st.session_state.answered else i}")
